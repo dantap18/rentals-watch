@@ -1,31 +1,28 @@
-// Pulls the Yad2 searches in config.json and merges them with the previous snapshot.
-// Usage: node scripts/fetch.mjs <prev.json> <out.json>
-// Test mode: FEED_FIXTURE=dir  -> reads <searchIndex>-page-<n>.json instead of calling Yad2.
+// Yad2 rentals watcher.
+//
+// Yad2's bot filter lets a cloud machine make about one request before it starts demanding a captcha,
+// so the workflow splits each search into map tiles and fetches every tile from its own runner (one
+// request each, via Yad2's map endpoint, which returns up to 200 full listings per call).
+//
+//   node scripts/fetch.mjs --plan                      -> prints the tile list (JSON) for the workflow matrix
+//   node scripts/fetch.mjs <prev.json> <out.json> <partsDir>
+//        partsDir holds one folder per tile with part.json (Yad2 response) and status.txt (HTTP code)
 import fs from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
-import { execFileSync } from 'node:child_process';
 
-const COOKIE_JAR = path.join(os.tmpdir(), 'yad2-cookies.txt');
-
-const [prevPath, outPath] = process.argv.slice(2);
 const cfg = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'config.json'), 'utf8'));
 const now = new Date().toISOString();
 const DAY = 864e5;
+const CAP = 200; // Yad2's map endpoint returns at most this many listings per call
 
 // Yad2 region slug (from the search URL) -> region id the API needs.
-// Other region ids: 2 south, 3 Tel Aviv area, 4 Judea & Samaria, 6 Jerusalem area, 7 north & valleys
-// (set "region" on the search in config.json if its slug isn't listed here).
+// Other ids: 2 south, 3 Tel Aviv area, 4 Judea & Samaria, 6 Jerusalem area, 7 north & valleys.
 const REGION_SLUGS = { 'center-and-sharon': 1, 'coastal-north': 5 };
-const BUCKETS = ['private', 'agency', 'platinum', 'leadingBroker', 'kingOfTheHar', 'trio', 'booster'];
 
 const readJson = (p, fallback) => { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } };
-const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-function searchesFromConfig() {
-  const list = cfg.searches || (cfg.searchUrl ? [{ name: '', url: cfg.searchUrl, region: cfg.region }] : []);
-  if (!list.length) throw new Error('No searches in config.json');
-  return list.map(s => {
+function searches() {
+  return (cfg.searches || []).map((s, si) => {
     const u = new URL(s.url);
     const parts = u.pathname.split('/').filter(Boolean); // realestate / rent / center-and-sharon
     const deal = parts[1] || 'rent';
@@ -33,60 +30,39 @@ function searchesFromConfig() {
     const params = new URLSearchParams(u.searchParams);
     params.delete('zoom');
     const region = s.region ?? REGION_SLUGS[slug];
-    if (region && !params.has('region')) params.set('region', String(region));
-    if (!params.has('region') && !params.has('city') && !params.has('area') && !params.has('topArea')) {
-      throw new Error(`Unknown region for "${slug}" - add "region" to that search in config.json`);
-    }
+    if (region) params.set('region', String(region));
+    if (!params.has('region')) throw new Error(`Unknown region for "${slug}" - add "region" to that search in config.json`);
+    const urlBox = params.get('bBox');
+    params.delete('bBox');
+    const tiles = (s.tiles?.length ? s.tiles : [urlBox || '29,34,34,36']).map((box, ti) => {
+      const q = new URLSearchParams(params);
+      q.set('bBox', box);
+      return {
+        id: `s${si}t${ti}`,
+        box: box.split(',').map(Number),
+        url: `https://gw.yad2.co.il/realestate-feed/${deal}/map?${q.toString().replace(/%2C/gi, ',')}`,
+      };
+    });
     const num = k => (params.has(k) ? Number(params.get(k)) : null);
-    const bbox = params.get('bBox')?.split(',').map(Number);
     return {
-      name: s.name || slug, url: s.url, deal, slug, params,
-      f: { minPrice: num('minPrice'), maxPrice: num('maxPrice'), minRooms: num('minRooms'), maxRooms: num('maxRooms'),
-           bbox: bbox?.length === 4 ? bbox : null },
+      name: s.name || slug, url: s.url, slug, tiles,
+      f: { minPrice: num('minPrice'), maxPrice: num('maxPrice'), minRooms: num('minRooms'), maxRooms: num('maxRooms') },
     };
   });
 }
+
+const inBox = (l, [a1, o1, a2, o2]) => l.lat != null && l.lon != null &&
+  l.lat >= Math.min(a1, a2) && l.lat <= Math.max(a1, a2) && l.lon >= Math.min(o1, o2) && l.lon <= Math.max(o1, o2);
 
 function matches(it, f) {
   if (f.maxPrice != null && !(it.price <= f.maxPrice)) return false;
   if (f.minPrice != null && !(it.price >= f.minPrice)) return false;
   if (f.minRooms != null && !(it.rooms >= f.minRooms)) return false;
   if (f.maxRooms != null && !(it.rooms <= f.maxRooms)) return false;
-  if (f.bbox) {
-    if (it.lat == null || it.lon == null) return false;
-    const [a1, o1, a2, o2] = f.bbox;
-    if (it.lat < Math.min(a1, a2) || it.lat > Math.max(a1, a2)) return false;
-    if (it.lon < Math.min(o1, o2) || it.lon > Math.max(o1, o2)) return false;
-  }
   return true;
 }
 
-async function getPage(s, idx, page) {
-  if (process.env.FEED_FIXTURE) {
-    const p = path.join(process.env.FEED_FIXTURE, `${idx}-page-${page}.json`);
-    return fs.existsSync(p) ? readJson(p) : { data: { pagination: { totalPages: page - 1 } } };
-  }
-  const q = new URLSearchParams(s.params);
-  if (page > 1) q.set('page', String(page));
-  const url = `https://gw.yad2.co.il/realestate-feed/${s.deal}/feed?${q.toString().replace(/%2C/gi, ',')}`;
-  // Plain curl gets 200 from GitHub's runners; Node's built-in fetch gets 403 from Yad2's bot filter.
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const raw = execFileSync('curl', ['-sS', '--compressed', '-m', '30', '-b', COOKIE_JAR, '-c', COOKIE_JAR,
-        '-H', 'Accept: application/json', '-w', '\n%{http_code}', url], { encoding: 'utf8', maxBuffer: 64 << 20 });
-      const cut = raw.lastIndexOf('\n');
-      const status = Number(raw.slice(cut + 1)), text = raw.slice(0, cut);
-      if (status !== 200) throw new Error(`HTTP ${status}`);
-      try { return JSON.parse(text); } catch {
-        throw new Error(/captcha|shieldsquare|radware|perimeterx/i.test(text) ? 'Blocked by Yad2 bot protection (captcha)' : 'Non-JSON response');
-      }
-    } catch (e) { lastErr = e.stderr ? new Error(String(e.stderr).trim().split('\n').pop()) : e; await sleep(3000 * attempt); }
-  }
-  throw lastErr;
-}
-
-function normalize(raw, bucket, slug) {
+function normalize(raw, slug, fallbackRegion) {
   const a = raw.address || {}, d = raw.additionalDetails || {}, m = raw.metaData || {};
   const tags = (raw.tags || []).map(t => (typeof t === 'string' ? t : t?.name || t?.text)).filter(Boolean);
   return {
@@ -97,7 +73,7 @@ function normalize(raw, bucket, slug) {
     sqm: m.squareMeterBuild || d.squareMeter || null, // built area; squareMeter can include garden/plot
     floor: a.house?.floor ?? null,
     property: d.property?.text || '',
-    region: a.region?.text || '',
+    region: a.region?.text || fallbackRegion,
     area: a.area?.text || '',
     city: a.city?.text || '',
     neighborhood: a.neighborhood?.text || '',
@@ -108,88 +84,97 @@ function normalize(raw, bucket, slug) {
     images: Array.isArray(m.images) ? m.images.length : 0,
     seller: raw.adType === 'private' ? 'private' : 'agency',
     agency: raw.customer?.agencyName || '',
-    promoted: !['private', 'agency'].includes(bucket),
     tags,
   };
 }
 
-async function main() {
+function readPart(partsDir, id) {
+  const dir = path.join(partsDir, `part-${id}`);
+  const status = (fs.existsSync(path.join(dir, 'status.txt')) ? fs.readFileSync(path.join(dir, 'status.txt'), 'utf8') : 'missing').trim();
+  if (status !== '200') return { error: status === '302' || status === '403' ? `blocked by Yad2 (HTTP ${status})` : `HTTP ${status}` };
+  const json = readJson(path.join(dir, 'part.json'), null);
+  const markers = json?.data?.markers;
+  if (!Array.isArray(markers)) return { error: 'unexpected response' };
+  return { markers };
+}
+
+function main() {
+  if (process.argv[2] === '--plan') {
+    console.log(JSON.stringify(searches().flatMap(s => s.tiles.map(t => ({ id: t.id, url: t.url })))));
+    return;
+  }
+  const [prevPath, outPath, partsDir] = process.argv.slice(2);
   const prev = readJson(prevPath, {});
   const prevList = Array.isArray(prev.listings) ? prev.listings : [];
-  let searches;
+  const ss = searches();
+
+  // 1. Collect this run's listings, tile by tile.
+  const byId = new Map(), failedTiles = [], capped = [];
+  for (const s of ss) {
+    for (const t of s.tiles) {
+      const r = readPart(partsDir, t.id);
+      if (r.error) { failedTiles.push({ ...t, search: s, error: r.error }); continue; }
+      if (r.markers.length >= CAP) capped.push(`${s.name} tile ${t.id}`);
+      for (const raw of r.markers) {
+        if (!raw?.token) continue;
+        const it = normalize(raw, s.slug, s.name);
+        if (matches(it, s.f)) byId.set(it.id, it);
+      }
+    }
+  }
+  const totalTiles = ss.reduce((n, s) => n + s.tiles.length, 0);
   const base = {
     title: cfg.title,
     newWindowHours: cfg.newWindowHours ?? 48,
     firstRunAt: prev.firstRunAt || now,
     lastAttemptAt: now,
+    searches: ss.map(s => ({ name: s.name, url: s.url })),
   };
   const write = out => { fs.mkdirSync(path.dirname(outPath), { recursive: true }); fs.writeFileSync(outPath, JSON.stringify(out, null, 1)); };
 
-  let items;
-  try {
-    searches = searchesFromConfig();
-    const byId = new Map();
-    for (const [idx, s] of searches.entries()) {
-      let totalPages = 1;
-      for (let page = 1; page <= Math.min(totalPages, cfg.maxPages ?? 25); page++) {
-        const data = (await getPage(s, idx, page))?.data;
-        if (!data || typeof data !== 'object') throw new Error(`Unexpected response shape (${s.name}, page ${page})`);
-        totalPages = data.pagination?.totalPages ?? 1;
-        for (const bucket of BUCKETS) {
-          for (const raw of data[bucket] || []) {
-            if (!raw?.token) continue;
-            const it = normalize(raw, bucket, s.slug);
-            if (!it.region) it.region = s.name;
-            if (!matches(it, s.f)) continue; // strictly inside your filters (and map box, if any)
-            if (!byId.has(it.id) || !it.promoted) byId.set(it.id, it);
-          }
-        }
-        if (page < totalPages) await sleep(1200);
-      }
-    }
-    items = [...byId.values()];
-  } catch (e) {
-    // Keep the previous listings untouched; just report the failure.
-    write({ ...prev, ...base, updatedAt: prev.updatedAt || null, status: 'error', error: String(e.message || e), listings: prevList });
-    console.error('Fetch failed:', e.message || e);
+  if (failedTiles.length === totalTiles) {
+    write({ ...prev, ...base, updatedAt: prev.updatedAt || null, status: 'error',
+      error: `All ${totalTiles} Yad2 requests failed (${failedTiles[0].error}). Will retry on the next run.`, listings: prevList });
+    console.error('All tiles failed');
     return;
   }
 
-  // When the search itself changes, listings that appear because of the new search are not "new".
-  const searchKey = searches.map(s => s.params.toString()).sort().join(' | ');
+  // 2. Merge with the previous snapshot.
+  const searchKey = ss.map(s => s.tiles.map(t => t.url).join(' ')).join(' | ');
   const searchChanged = prevList.length > 0 && prev.searchKey !== searchKey;
   const isBaseline = (prevList.length === 0 && !prev.updatedAt) || searchChanged;
+  const inFailedTile = l => failedTiles.some(t => inBox(l, t.box) && (!l.region || l.region === t.search.name || !ss.some(s => s.name === l.region)));
   const prevById = new Map(prevList.map(l => [l.id, l]));
-  const seen = new Set();
-  const listings = items.map(it => {
-    seen.add(it.id);
+  const listings = [];
+  for (const it of byId.values()) {
     const old = prevById.get(it.id);
     const history = old?.priceHistory ? [...old.priceHistory] : [{ price: it.price, at: now }];
     if (old && old.price !== it.price) history.push({ price: it.price, at: now });
-    return {
+    listings.push({
       ...it,
       firstSeen: old?.firstSeen || now,
       initial: old ? !!old.initial : isBaseline, // there when tracking (or this search) started -> not "new"
-      lastSeen: now,
-      active: true,
-      priceHistory: history.slice(-10),
-    };
-  });
+      lastSeen: now, active: true, priceHistory: history.slice(-10),
+    });
+  }
   const keepMs = (cfg.keepRemovedDays ?? 7) * DAY;
   for (const old of prevList) {
-    if (seen.has(old.id) || searchChanged) continue; // after a search change, drop listings from the old search
+    if (byId.has(old.id) || searchChanged) continue;
+    if (old.active !== false && inFailedTile(old)) { listings.push(old); continue; } // tile not fetched this run: keep as is
     const removedAt = old.active === false ? old.removedAt : now;
     if (Date.now() - new Date(removedAt).getTime() > keepMs) continue;
     listings.push({ ...old, active: false, removedAt });
   }
 
+  const warnings = [];
+  if (failedTiles.length) warnings.push(`${failedTiles.length} of ${totalTiles} map areas couldn't be fetched this run (${failedTiles[0].error}); their listings are from the previous run.`);
+  if (capped.length) warnings.push(`Some map areas hit Yad2's 200-listing limit (${capped.join(', ')}) - split them into smaller tiles in config.json.`);
   write({
-    ...base, updatedAt: now, status: 'ok', error: null, count: items.length, searchKey,
-    searches: searches.map(s => ({ name: s.name, url: s.url })),
-    listings,
+    ...base, updatedAt: now, status: failedTiles.length ? 'partial' : 'ok', error: null, warning: warnings.join(' ') || null,
+    count: listings.filter(l => l.active).length, searchKey, listings,
   });
   const fresh = listings.filter(l => l.active && !l.initial && l.firstSeen === now).length;
-  console.log(`OK: ${items.length} listings, ${fresh} new this run${searchChanged ? ' (search changed - new baseline)' : ''}`);
+  console.log(`OK: ${byId.size} fetched, ${fresh} new, ${failedTiles.length}/${totalTiles} tiles failed${searchChanged ? ' (search changed - new baseline)' : ''}`);
 }
 
 main();
