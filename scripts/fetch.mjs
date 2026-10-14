@@ -3,6 +3,10 @@
 // Test mode: FEED_FIXTURE=dir  -> reads <searchIndex>-page-<n>.json instead of calling Yad2.
 import fs from 'node:fs';
 import path from 'node:path';
+import os from 'node:os';
+import { execFileSync } from 'node:child_process';
+
+const COOKIE_JAR = path.join(os.tmpdir(), 'yad2-cookies.txt');
 
 const [prevPath, outPath] = process.argv.slice(2);
 const cfg = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), '..', 'config.json'), 'utf8'));
@@ -64,25 +68,20 @@ async function getPage(s, idx, page) {
   }
   const q = new URLSearchParams(s.params);
   if (page > 1) q.set('page', String(page));
-  const url = `https://gw.yad2.co.il/realestate-feed/${s.deal}/feed?${q}`;
+  const url = `https://gw.yad2.co.il/realestate-feed/${s.deal}/feed?${q.toString().replace(/%2C/gi, ',')}`;
+  // Plain curl gets 200 from GitHub's runners; Node's built-in fetch gets 403 from Yad2's bot filter.
   let lastErr;
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
-      const res = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Accept-Language': 'he-IL,he;q=0.9,en;q=0.8',
-          'Origin': 'https://www.yad2.co.il',
-          'Referer': 'https://www.yad2.co.il/',
-        },
-      });
-      const text = await res.text();
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const raw = execFileSync('curl', ['-sS', '--compressed', '-m', '30', '-b', COOKIE_JAR, '-c', COOKIE_JAR,
+        '-H', 'Accept: application/json', '-w', '\n%{http_code}', url], { encoding: 'utf8', maxBuffer: 64 << 20 });
+      const cut = raw.lastIndexOf('\n');
+      const status = Number(raw.slice(cut + 1)), text = raw.slice(0, cut);
+      if (status !== 200) throw new Error(`HTTP ${status}`);
       try { return JSON.parse(text); } catch {
         throw new Error(/captcha|shieldsquare|radware|perimeterx/i.test(text) ? 'Blocked by Yad2 bot protection (captcha)' : 'Non-JSON response');
       }
-    } catch (e) { lastErr = e; await sleep(3000 * attempt); }
+    } catch (e) { lastErr = e.stderr ? new Error(String(e.stderr).trim().split('\n').pop()) : e; await sleep(3000 * attempt); }
   }
   throw lastErr;
 }
