@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Rentals Watch</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  :root {
+    --bg: #f6f5f2; --surface: #ffffff; --ink: #1d1d1b; --muted: #6b6a66; --line: #e4e2dc;
+    --accent: #c2410c; --accent-soft: #fff1e8; --good: #15803d; --good-soft: #e9f7ee;
+    --warn: #a16207; --warn-soft: #fdf6e3; --bad: #b91c1c; --bad-soft: #fdecec;
+    --shadow: 0 1px 2px rgba(0,0,0,.05), 0 4px 16px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #151514; --surface: #1f1f1d; --ink: #f1f0ec; --muted: #a3a29c; --line: #34332f;
+      --accent: #fb923c; --accent-soft: #3a2416; --good: #4ade80; --good-soft: #15291c;
+      --warn: #facc15; --warn-soft: #2e2810; --bad: #f87171; --bad-soft: #351919;
+      --shadow: none;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans Hebrew", Arial, sans-serif; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 16px 48px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px 20px; align-items: flex-end; justify-content: space-between; }
+  h1 { margin: 0; font-size: 26px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .sub a { color: inherit; }
+  .status { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+  .updated { font-size: 13px; color: var(--muted); text-align: right; }
+  .updated b { color: var(--ink); font-weight: 600; }
+  button, .btn { font: inherit; font-size: 14px; border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+    padding: 7px 12px; border-radius: 8px; cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button:hover, .btn:hover { border-color: var(--muted); }
+  button.primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+  button:disabled { opacity: .6; cursor: default; }
+  .banner { margin-top: 14px; padding: 10px 14px; border-radius: 10px; font-size: 14px; }
+  .banner.warn { background: var(--warn-soft); color: var(--warn); }
+  .banner.bad { background: var(--bad-soft); color: var(--bad); }
+  .banner.good { background: var(--good-soft); color: var(--good); }
+  .summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 18px 0 12px; }
+  .chip { background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 11px; font-size: 13px; color: var(--muted); }
+  .chip b { color: var(--ink); }
+  .chip.new b { color: var(--accent); }
+  .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px 0 16px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+  .toolbar input[type=search], .toolbar select { font: inherit; font-size: 14px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+  .toolbar input[type=search] { flex: 1 1 180px; min-width: 0; }
+  .toolbar label { font-size: 14px; display: inline-flex; gap: 6px; align-items: center; color: var(--muted); cursor: pointer; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow);
+    display: flex; flex-direction: column; color: inherit; text-decoration: none; position: relative; transition: transform .12s; }
+  .card:hover { transform: translateY(-2px); }
+  .card.is-new { border: 2px solid var(--accent); }
+  .card.gone { opacity: .55; }
+  .ph { aspect-ratio: 4/3; background: var(--line) center/cover no-repeat; position: relative; }
+  .ph img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .badges { position: absolute; top: 8px; left: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+  .badge { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; letter-spacing: .02em; }
+  .badge.new { background: var(--accent); color: #fff; }
+  .badge.drop { background: #15803d; }
+  .badge.up { background: #b91c1c; }
+  .badge.gone { background: #555; }
+  .body { padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 6px; flex: 1; }
+  .price { font-size: 20px; font-weight: 700; display: flex; align-items: baseline; gap: 8px; }
+  .price s { font-size: 13px; color: var(--muted); font-weight: 400; }
+  .facts { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 14px; }
+  .addr { direction: rtl; text-align: right; font-size: 14px; }
+  .addr .city { color: var(--muted); }
+  .meta { margin-top: auto; padding-top: 6px; display: flex; justify-content: space-between; gap: 8px; font-size: 12px; color: var(--muted); }
+  .meta .who { direction: rtl; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #map { height: 560px; border-radius: 12px; border: 1px solid var(--line); }
+  .empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+  details.removed { margin-top: 28px; }
+  details.removed summary { cursor: pointer; color: var(--muted); font-size: 14px; margin-bottom: 12px; }
+  .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: var(--ink); color: var(--bg); padding: 10px 16px; border-radius: 10px; font-size: 14px; opacity: 0; transition: opacity .2s; pointer-events: none; z-index: 1000; }
+  .toast.show { opacity: 1; }
+  footer { margin-top: 36px; font-size: 12px; color: var(--muted); }
+  footer a { color: inherit; }
+  @media (max-width: 600px) { .updated { text-align: left; } #map { height: 70vh; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1 id="title">Rentals Watch</h1>
+      <div class="sub" id="criteria">Loading…</div>
+    </div>
+    <div class="status">
+      <div class="updated" id="updated">—</div>
+      <button class="primary" id="refresh" title="Reload the latest snapshot">↻ Refresh</button>
+      <a class="btn" id="runNow" target="_blank" rel="noopener" hidden title="Owner only: trigger a Yad2 check on GitHub">Check Yad2 now ↗</a>
+    </div>
+  </header>
+  <div id="banner"></div>
+  <div class="summary" id="summary"></div>
+  <div class="toolbar">
+    <input type="search" id="q" placeholder="Search street, neighborhood, city…">
+    <select id="sort" aria-label="Sort">
+      <option value="new">Newest first</option>
+      <option value="priceAsc">Price: low → high</option>
+      <option value="priceDesc">Price: high → low</option>
+      <option value="rooms">Most rooms</option>
+      <option value="sqm">Largest</option>
+    </select>
+    <label><input type="checkbox" id="newOnly"> New only</label>
+    <label><input type="checkbox" id="privateOnly"> Private only</label>
+    <button id="markSeen" title="Clear the NEW highlights in this browser">Mark all seen</button>
+    <span class="seg" role="group" aria-label="View">
+      <button id="vList" aria-pressed="true">List</button>
+      <button id="vMap" aria-pressed="false">Map</button>
+    </span>
+  </div>
+  <div id="list" class="grid"></div>
+  <div id="map" hidden></div>
+  <details class="removed" id="removedWrap" hidden>
+    <summary id="removedSummary"></summary>
+    <div id="removed" class="grid"></div>
+  </details>
+  <footer>Data from Yad2, refreshed automatically every ~30 minutes. “New” = appeared since you last clicked “Mark all seen” (or in the last <span id="win">48</span>h). Listings link to Yad2.</footer>
+</div>
+<div class="toast" id="toast"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem('y2w:' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem('y2w:' + k, JSON.stringify(v)); } catch {} },
+  };
+  const PROPERTY = { 1: 'apartment', 3: 'garden apt', 4: 'studio/loft', 5: 'house/cottage', 6: 'roof/penthouse', 7: 'duplex', 11: 'housing unit', 32: 'farm/nachala', 39: 'semi-detached', 49: 'basement', 51: 'triplex', 55: 'auxiliary farm' };
+  const fmtPrice = n => n == null ? '—' : '₪' + Number(n).toLocaleString('en-US');
+  const fmtTime = iso => new Date(iso).toLocaleString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+  function ago(iso) {
+    const s = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (s < 90) return 'just now';
+    if (s < 3600) return Math.round(s / 60) + ' min ago';
+    if (s < 86400) return Math.round(s / 3600) + 'h ago';
+    return Math.round(s / 86400) + 'd ago';
+  }
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  let data = null, map = null, layer = null;
+  const ui = { q: '', sort: store.get('sort', 'new'), newOnly: false, privateOnly: store.get('privateOnly', false), view: store.get('view', 'list') };
+
+  // GitHub Pages: https://<owner>.github.io/<repo>/  ->  workflow page for "Check Yad2 now"
+  (function wireRunNow() {
+    const m = location.hostname.match(/^([^.]+)\.github\.io$/);
+    const repo = location.pathname.split('/').filter(Boolean)[0];
+    if (m && repo) { $('runNow').href = `https://github.com/${m[1]}/${repo}/actions/workflows/update.yml`; $('runNow').hidden = false; }
+  })();
+
+  function newCutoff() {
+    const ack = store.get('ackAt', null);
+    const win = (data?.newWindowHours ?? 48) * 3600e3;
+    return ack ? new Date(ack).getTime() : Date.now() - win;
+  }
+  const isNew = l => l.active && !l.initial && new Date(l.firstSeen).getTime() > newCutoff();
+  function priceChange(l) {
+    const h = l.priceHistory || [];
+    if (h.length < 2) return null;
+    const prev = h[h.length - 2].price, cur = h[h.length - 1].price;
+    return prev && cur && prev !== cur ? { prev, diff: cur - prev } : null;
+  }
+
+  function criteriaText(url) {
+    try {
+      const u = new URL(url), p = u.searchParams, bits = [];
+      if (p.get('minRooms') || p.get('maxRooms')) bits.push(`${p.get('minRooms') || '?'}${p.get('maxRooms') ? '–' + p.get('maxRooms') : '+'} rooms`);
+      if (p.get('minPrice') || p.get('maxPrice')) bits.push(p.get('minPrice') ? `${fmtPrice(p.get('minPrice'))}–${fmtPrice(p.get('maxPrice'))}` : `up to ${fmtPrice(p.get('maxPrice'))}`);
+      if (p.get('property')) bits.push(p.get('property').split(',').map(x => PROPERTY[x] || 'type ' + x).filter((v, i, a) => a.indexOf(v) === i).join(', '));
+      if (p.get('imageOnly') === '1') bits.push('with photos');
+      if (p.get('bBox')) bits.push('selected map area');
+      return bits.join(' · ') + ` · <a href="${esc(url)}" target="_blank" rel="noopener">open search on Yad2 ↗</a>`;
+    } catch { return ''; }
+  }
+
+  function card(l) {
+    const nw = isNew(l), pc = priceChange(l);
+    const badges = [];
+    if (!l.active) badges.push('<span class="badge gone">Removed</span>');
+    else if (nw) badges.push('<span class="badge new">NEW</span>');
+    if (pc && l.active) badges.push(`<span class="badge ${pc.diff < 0 ? 'drop' : 'up'}">${pc.diff < 0 ? '↓' : '↑'} ${fmtPrice(Math.abs(pc.diff))}</span>`);
+    const facts = [
+      l.rooms != null && `<span><b>${l.rooms}</b> rooms</span>`,
+      l.sqm && `<span><b>${l.sqm}</b> m²</span>`,
+      l.floor != null && `<span>${l.floor === 0 ? 'Ground floor' : 'Floor ' + l.floor}</span>`,
+    ].filter(Boolean).join('');
+    const seen = l.initial ? 'listed before tracking' : `added ${ago(l.firstSeen)}`;
+    return `<a class="card${nw ? ' is-new' : ''}${l.active ? '' : ' gone'}" href="${esc(l.url)}" target="_blank" rel="noopener" data-id="${esc(l.id)}">
+      <div class="ph">${l.image ? `<img loading="lazy" referrerpolicy="no-referrer" src="${esc(l.image)}" alt="">` : ''}<div class="badges">${badges.join('')}</div></div>
+      <div class="body">
+        <div class="price">${fmtPrice(l.price)}${pc ? `<s>${fmtPrice(pc.prev)}</s>` : ''}</div>
+        <div class="facts">${facts}</div>
+        <div class="addr">${esc(l.property)}${l.property ? ' · ' : ''}${esc([l.street, l.neighborhood].filter(Boolean).join(', '))} <span class="city">${esc(l.city)}</span></div>
+        <div class="meta"><span title="${esc(fmtTime(l.firstSeen))}">${l.active ? seen : 'removed ' + ago(l.removedAt)}</span><span class="who">${l.seller === 'private' ? 'Private' : esc(l.agency || 'Agency')}</span></div>
+      </div></a>`;
+  }
+
+  function visible() {
+    const q = ui.q.trim().toLowerCase();
+    let rows = data.listings.filter(l => l.active);
+    if (q) rows = rows.filter(l => [l.street, l.neighborhood, l.city, l.property, l.agency].join(' ').toLowerCase().includes(q));
+    if (ui.newOnly) rows = rows.filter(isNew);
+    if (ui.privateOnly) rows = rows.filter(l => l.seller === 'private');
+    const by = {
+      new: (a, b) => (isNew(b) - isNew(a)) || (b.initial === a.initial ? 0 : a.initial ? 1 : -1) || new Date(b.firstSeen) - new Date(a.firstSeen) || a.price - b.price,
+      priceAsc: (a, b) => a.price - b.price, priceDesc: (a, b) => b.price - a.price,
+      rooms: (a, b) => b.rooms - a.rooms || a.price - b.price, sqm: (a, b) => (b.sqm || 0) - (a.sqm || 0),
+    }[ui.sort];
+    return rows.sort(by);
+  }
+
+  function render() {
+    if (!data) return;
+    $('title').textContent = data.title || 'Rentals Watch';
+    document.title = data.title || 'Rentals Watch';
+    $('criteria').innerHTML = criteriaText(data.searchUrl);
+    $('win').textContent = data.newWindowHours ?? 48;
+    // Freshness
+    const upd = data.updatedAt;
+    $('updated').innerHTML = upd ? `Last updated <b>${ago(upd)}</b><br>${esc(fmtTime(upd))}` : 'Not updated yet';
+    let banner = '';
+    if (data.status === 'error') banner = `<div class="banner bad">Last check (${esc(ago(data.lastAttemptAt))}) failed: ${esc(data.error)}. Showing the last good results.</div>`;
+    else if (upd && Date.now() - new Date(upd) > 3 * 3600e3) banner = `<div class="banner warn">No successful update for ${esc(ago(upd).replace(' ago', ''))} — results may be stale.</div>`;
+    $('banner').innerHTML = banner;
+
+    const active = data.listings.filter(l => l.active);
+    const nNew = active.filter(isNew).length;
+    const prices = active.map(l => l.price).filter(Boolean).sort((a, b) => a - b);
+    const drops = active.filter(l => (priceChange(l)?.diff || 0) < 0).length;
+    $('summary').innerHTML = [
+      `<span class="chip new"><b>${nNew}</b> new</span>`,
+      `<span class="chip"><b>${active.length}</b> listings</span>`,
+      prices.length ? `<span class="chip">median <b>${fmtPrice(prices[Math.floor(prices.length / 2)])}</b></span>` : '',
+      drops ? `<span class="chip"><b>${drops}</b> price drop${drops > 1 ? 's' : ''}</span>` : '',
+    ].join('');
+    $('markSeen').disabled = nNew === 0;
+
+    const rows = visible();
+    $('list').innerHTML = rows.length ? rows.map(card).join('') : `<div class="empty">${ui.newOnly ? 'Nothing new right now.' : 'No listings match.'}</div>`;
+    const gone = data.listings.filter(l => !l.active).sort((a, b) => new Date(b.removedAt) - new Date(a.removedAt));
+    $('removedWrap').hidden = !gone.length;
+    $('removedSummary').textContent = `Recently removed from Yad2 (${gone.length})`;
+    $('removed').innerHTML = gone.map(card).join('');
+
+    $('list').hidden = ui.view !== 'list';
+    $('map').hidden = ui.view !== 'map';
+    $('vList').setAttribute('aria-pressed', ui.view === 'list');
+    $('vMap').setAttribute('aria-pressed', ui.view === 'map');
+    if (ui.view === 'map') renderMap(rows);
+  }
+
+  function renderMap(rows) {
+    if (!window.L) { $('map').innerHTML = '<div class="empty">Map library failed to load.</div>'; return; }
+    if (!map) {
+      map = L.map('map', { scrollWheelZoom: true });
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap' }).addTo(map);
+      layer = L.layerGroup().addTo(map);
+    }
+    setTimeout(() => map.invalidateSize(), 0);
+    layer.clearLayers();
+    const pts = [];
+    for (const l of rows) {
+      if (l.lat == null || l.lon == null) continue;
+      const nw = isNew(l);
+      const m = L.circleMarker([l.lat, l.lon], { radius: nw ? 10 : 7, weight: 2, color: nw ? '#c2410c' : '#1d1d1b', fillColor: nw ? '#fb923c' : '#ffffff', fillOpacity: .95 });
+      m.bindPopup(`<div style="min-width:180px"><b>${fmtPrice(l.price)}</b>${nw ? ' <span style="color:#c2410c;font-weight:700">NEW</span>' : ''}<br>${l.rooms ?? '?'} rooms${l.sqm ? ' · ' + l.sqm + ' m²' : ''}<div dir="rtl">${esc([l.street, l.neighborhood, l.city].filter(Boolean).join(', '))}</div><a href="${esc(l.url)}" target="_blank" rel="noopener">Open on Yad2 ↗</a></div>`);
+      m.addTo(layer); pts.push([l.lat, l.lon]);
+    }
+    try {
+      const p = new URL(data.searchUrl).searchParams.get('bBox')?.split(',').map(Number);
+      if (p?.length === 4) { L.rectangle([[p[0], p[1]], [p[2], p[3]]], { color: '#888', weight: 1, fill: false, dashArray: '4 4' }).addTo(layer); pts.push([p[0], p[1]], [p[2], p[3]]); }
+    } catch {}
+    if (pts.length) map.fitBounds(pts, { padding: [24, 24], maxZoom: 15 });
+  }
+
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast.t); toast.t = setTimeout(() => t.classList.remove('show'), 3200); }
+
+  async function load(manual) {
+    const btn = $('refresh');
+    btn.disabled = true; btn.textContent = '↻ Refreshing…';
+    try {
+      const res = await fetch('data/listings.json?t=' + Date.now(), { cache: 'no-store' });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const next = await res.json();
+      const before = new Set((data?.listings || []).filter(l => l.active).map(l => l.id));
+      const changed = !data || next.updatedAt !== data.updatedAt;
+      data = next;
+      if (changed || manual) render();
+      if (manual) {
+        const added = data.listings.filter(l => l.active && !before.has(l.id)).length;
+        if (!changed) toast('Already up to date — next Yad2 check runs automatically.');
+        else toast(added ? `${added} new listing${added > 1 ? 's' : ''} since last refresh` : 'Updated — no new listings');
+      }
+    } catch (e) {
+      if (!data) $('list').innerHTML = `<div class="empty">Couldn't load listings yet (${esc(e.message)}). The first update may still be running.</div>`;
+      if (manual) toast('Refresh failed: ' + e.message);
+    } finally { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+  }
+
+  // Controls
+  $('refresh').onclick = () => load(true);
+  $('q').oninput = e => { ui.q = e.target.value; render(); };
+  $('sort').value = ui.sort; $('sort').onchange = e => { ui.sort = e.target.value; store.set('sort', ui.sort); render(); };
+  $('newOnly').onchange = e => { ui.newOnly = e.target.checked; render(); };
+  $('privateOnly').checked = ui.privateOnly; $('privateOnly').onchange = e => { ui.privateOnly = e.target.checked; store.set('privateOnly', ui.privateOnly); render(); };
+  $('markSeen').onclick = () => { store.set('ackAt', data?.updatedAt || new Date().toISOString()); render(); toast('Marked as seen in this browser'); };
+  $('vList').onclick = () => { ui.view = 'list'; store.set('view', 'list'); render(); };
+  $('vMap').onclick = () => { ui.view = 'map'; store.set('view', 'map'); render(); };
+
+  load(false);
+  setInterval(() => load(false), 5 * 60e3);            // poll the snapshot every 5 min
+  setInterval(() => { if (data?.updatedAt) $('updated').innerHTML = `Last updated <b>${ago(data.updatedAt)}</b><br>${esc(fmtTime(data.updatedAt))}`; }, 60e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) load(false); });
+})();
+</script>
+</body>
+</html>
