@@ -17,7 +17,41 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  update:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      tiles: ${{ steps.plan.outputs.tiles }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: plan
+        run: echo "tiles=$(node scripts/fetch.mjs --plan)" >> "$GITHUB_OUTPUT"
+
+  # One fresh runner per map tile, one request each (Yad2 challenges a cloud IP after its first request).
+  fetch:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tile: ${{ fromJson(needs.plan.outputs.tiles) }}
+    steps:
+      - name: Fetch tile
+        env:
+          URL: ${{ matrix.tile.url }}
+        run: |
+          mkdir out
+          code=$(curl -sS --compressed -m 30 -o out/part.json -w '%{http_code}' "$URL" || echo 000)
+          echo "$code" > out/status.txt
+          echo "HTTP $code, $(wc -c < out/part.json 2>/dev/null || echo 0) bytes"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: part-${{ matrix.tile.id }}
+          path: out
+          retention-days: 1
+
+  build:
+    needs: fetch
+    if: always()
     runs-on: ubuntu-latest
     environment:
       name: github-pages
@@ -32,6 +66,11 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v5
 
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: part-*
+          path: parts
+
       - name: Restore previous state
         uses: actions/cache/restore@v4
         with:
@@ -45,8 +84,8 @@ jobs:
           else curl -fsSL "${{ steps.pages.outputs.base_url }}/data/listings.json?t=$(date +%s)" -o prev.json || echo '{}' > prev.json
           fi
 
-      - name: Fetch Yad2
-        run: node scripts/fetch.mjs prev.json site/data/listings.json
+      - name: Merge
+        run: node scripts/fetch.mjs prev.json site/data/listings.json parts
 
       - name: Save state
         run: mkdir -p state && cp site/data/listings.json state/listings.json
