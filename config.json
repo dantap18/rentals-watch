@@ -1,8 +1,16 @@
 {
   "title": "Rentals watch",
-  "searchUrl": "https://www.yad2.co.il/realestate/rent/coastal-north?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1&zoom=13&bBox=32.433889,34.902338,32.501289,34.950037",
-  "region": 5,
+  "searches": [
+    {
+      "name": "מרכז והשרון",
+      "url": "https://www.yad2.co.il/realestate/rent/center-and-sharon?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1"
+    },
+    {
+      "name": "מישור החוף הצפוני",
+      "url": "https://www.yad2.co.il/realestate/rent/coastal-north?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1"
+    }
+  ],
   "newWindowHours": 48,
   "keepRemovedDays": 7,
-  "maxPages": 20
+  "maxPages": 25
 }
