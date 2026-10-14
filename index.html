@@ -102,6 +102,8 @@
   <div class="summary" id="summary"></div>
   <div class="toolbar">
     <input type="search" id="q" placeholder="Search street, neighborhood, city…">
+    <select id="region" aria-label="Region" dir="auto"><option value="">All regions</option></select>
+    <select id="city" aria-label="City" dir="auto"><option value="">All cities</option></select>
     <select id="sort" aria-label="Sort">
       <option value="new">Newest first</option>
       <option value="priceAsc">Price: low → high</option>
@@ -147,7 +149,7 @@
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
   let data = null, map = null, layer = null;
-  const ui = { q: '', sort: store.get('sort', 'new'), newOnly: false, privateOnly: store.get('privateOnly', false), view: store.get('view', 'list') };
+  const ui = { region: '', city: '', q: '', sort: store.get('sort', 'new'), newOnly: false, privateOnly: store.get('privateOnly', false), view: store.get('view', 'list') };
 
   // GitHub Pages: https://<owner>.github.io/<repo>/  ->  workflow page for "Check Yad2 now"
   (function wireRunNow() {
@@ -169,16 +171,31 @@
     return prev && cur && prev !== cur ? { prev, diff: cur - prev } : null;
   }
 
-  function criteriaText(url) {
+  function searchList() {
+    return data.searches || (data.searchUrl ? [{ name: '', url: data.searchUrl }] : []);
+  }
+  function criteriaText() {
     try {
-      const u = new URL(url), p = u.searchParams, bits = [];
+      const ss = searchList();
+      const p = new URL(ss[0].url).searchParams, bits = [];
       if (p.get('minRooms') || p.get('maxRooms')) bits.push(`${p.get('minRooms') || '?'}${p.get('maxRooms') ? '–' + p.get('maxRooms') : '+'} rooms`);
       if (p.get('minPrice') || p.get('maxPrice')) bits.push(p.get('minPrice') ? `${fmtPrice(p.get('minPrice'))}–${fmtPrice(p.get('maxPrice'))}` : `up to ${fmtPrice(p.get('maxPrice'))}`);
       if (p.get('property')) bits.push(p.get('property').split(',').map(x => PROPERTY[x] || 'type ' + x).filter((v, i, a) => a.indexOf(v) === i).join(', '));
       if (p.get('imageOnly') === '1') bits.push('with photos');
       if (p.get('bBox')) bits.push('selected map area');
-      return bits.join(' · ') + ` · <a href="${esc(url)}" target="_blank" rel="noopener">open search on Yad2 ↗</a>`;
+      const links = ss.map(s => `<a href="${esc(s.url)}" target="_blank" rel="noopener" dir="rtl">${esc(s.name || 'Yad2 search')}</a>`).join(' + ');
+      return bits.join(' · ') + ` · ${links} ↗`;
     } catch { return ''; }
+  }
+
+  function fillSelects() {
+    const active = data.listings.filter(l => l.active);
+    const opts = (vals, all, cur) => `<option value="">${all}</option>` + [...new Set(vals.filter(Boolean))].sort((a, b) => a.localeCompare(b, 'he'))
+      .map(v => `<option value="${esc(v)}"${v === cur ? ' selected' : ''}>${esc(v)} (${active.filter(l => l.region === v || l.city === v).length})</option>`).join('');
+    const regions = active.map(l => l.region);
+    $('region').innerHTML = opts(regions, 'All regions', ui.region);
+    $('region').hidden = new Set(regions).size < 2;
+    $('city').innerHTML = opts(active.filter(l => !ui.region || l.region === ui.region).map(l => l.city), 'All cities', ui.city);
   }
 
   function card(l) {
@@ -206,6 +223,8 @@
   function visible() {
     const q = ui.q.trim().toLowerCase();
     let rows = data.listings.filter(l => l.active);
+    if (ui.region) rows = rows.filter(l => l.region === ui.region);
+    if (ui.city) rows = rows.filter(l => l.city === ui.city);
     if (q) rows = rows.filter(l => [l.street, l.neighborhood, l.city, l.property, l.agency].join(' ').toLowerCase().includes(q));
     if (ui.newOnly) rows = rows.filter(isNew);
     if (ui.privateOnly) rows = rows.filter(l => l.seller === 'private');
@@ -221,7 +240,8 @@
     if (!data) return;
     $('title').textContent = data.title || 'Rentals Watch';
     document.title = data.title || 'Rentals Watch';
-    $('criteria').innerHTML = criteriaText(data.searchUrl);
+    $('criteria').innerHTML = criteriaText();
+    fillSelects();
     $('win').textContent = data.newWindowHours ?? 48;
     // Freshness
     const upd = data.updatedAt;
@@ -275,7 +295,7 @@
       m.addTo(layer); pts.push([l.lat, l.lon]);
     }
     try {
-      const p = new URL(data.searchUrl).searchParams.get('bBox')?.split(',').map(Number);
+      const p = searchList().length === 1 && new URL(searchList()[0].url).searchParams.get('bBox')?.split(',').map(Number);
       if (p?.length === 4) { L.rectangle([[p[0], p[1]], [p[2], p[3]]], { color: '#888', weight: 1, fill: false, dashArray: '4 4' }).addTo(layer); pts.push([p[0], p[1]], [p[2], p[3]]); }
     } catch {}
     if (pts.length) map.fitBounds(pts, { padding: [24, 24], maxZoom: 15 });
@@ -307,6 +327,8 @@
 
   // Controls
   $('refresh').onclick = () => load(true);
+  $('region').onchange = e => { ui.region = e.target.value; ui.city = ''; render(); };
+  $('city').onchange = e => { ui.city = e.target.value; render(); };
   $('q').oninput = e => { ui.q = e.target.value; render(); };
   $('sort').value = ui.sort; $('sort').onchange = e => { ui.sort = e.target.value; store.set('sort', ui.sort); render(); };
   $('newOnly').onchange = e => { ui.newOnly = e.target.checked; render(); };
