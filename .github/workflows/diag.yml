@@ -1,0 +1,18 @@
+name: Diagnose Yad2
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Yad2
+        run: |
+          Q='region=5&property=3,5,6,39,32,55&minRooms=3&maxPrice=8000'
+          UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36'
+          probe() { echo "=== $1"; curl -sS -o body.txt -D headers.txt -w 'status=%{http_code} http=%{http_version}\n' --compressed "${@:2}" || true; grep -iE '^(server|content-type|set-cookie|x-|cf-|akamai)' headers.txt | cut -c1-120; head -c 300 body.txt | tr '\n' ' '; echo; echo; }
+          echo "Runner IP: $(curl -s https://api.ipify.org)"
+          probe "1 feed plain curl" "https://gw.yad2.co.il/realestate-feed/rent/feed?$Q"
+          probe "2 feed browser headers http2" --http2 "https://gw.yad2.co.il/realestate-feed/rent/feed?$Q" -H "User-Agent: $UA" -H 'Accept: application/json, text/plain, */*' -H 'Accept-Language: he-IL,he;q=0.9,en-US;q=0.8' -H 'Origin: https://www.yad2.co.il' -H 'Referer: https://www.yad2.co.il/' -H 'sec-ch-ua: "Chromium";v="129", "Not=A?Brand";v="8"' -H 'sec-ch-ua-mobile: ?0' -H 'sec-ch-ua-platform: "Windows"' -H 'sec-fetch-dest: empty' -H 'sec-fetch-mode: cors' -H 'sec-fetch-site: same-site'
+          probe "3 map endpoint" --http2 "https://gw.yad2.co.il/realestate-feed/rent/map?$Q" -H "User-Agent: $UA" -H 'Origin: https://www.yad2.co.il' -H 'Referer: https://www.yad2.co.il/'
+          probe "4 website HTML" --http2 -c jar.txt "https://www.yad2.co.il/realestate/rent/coastal-north?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000" -H "User-Agent: $UA" -H 'Accept: text/html,application/xhtml+xml' -H 'Accept-Language: he-IL,he;q=0.9'
+          echo "website has __NEXT_DATA__: $(grep -c __NEXT_DATA__ body.txt)"
+          probe "5 feed with website cookies" --http2 -b jar.txt "https://gw.yad2.co.il/realestate-feed/rent/feed?$Q" -H "User-Agent: $UA" -H 'Accept: application/json' -H 'Origin: https://www.yad2.co.il' -H 'Referer: https://www.yad2.co.il/'
