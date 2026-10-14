@@ -1,0 +1,21 @@
+name: Diagnose Yad2 (2)
+on: workflow_dispatch
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe Yad2
+        run: |
+          B='https://gw.yad2.co.il/realestate-feed/rent/feed'
+          F='property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1'
+          probe() { echo "=== $1"; curl -sS -o body.txt -D headers.txt -w 'status=%{http_code}\n' --compressed "${@:2}" || true; grep -iE '^(location|server|content-type):' headers.txt | cut -c1-200; head -c 200 body.txt | tr '\n' ' '; echo; echo; }
+          probe "A plain region5" "$B?region=5&$F"
+          probe "B plain region1" "$B?region=1&$F"
+          probe "C accept json" -H 'Accept: application/json' "$B?region=1&$F"
+          probe "D encoded commas" "$B?region=1&property=3%2C5%2C6%2C39%2C32%2C55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1"
+          probe "E cookie jar 1" -b jar.txt -c jar.txt "$B?region=1&$F"
+          sleep 1.2
+          probe "F cookie jar page2" -b jar.txt -c jar.txt "$B?region=1&$F&page=2"
+          sleep 1.2
+          probe "G no jar page3" "$B?region=1&$F&page=3"
+          for i in 4 5 6 7 8; do sleep 1.2; probe "H page$i" "$B?region=1&$F&page=$i"; done
