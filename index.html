@@ -248,6 +248,7 @@
     $('updated').innerHTML = upd ? `Last updated <b>${ago(upd)}</b><br>${esc(fmtTime(upd))}` : 'Not updated yet';
     let banner = '';
     if (data.status === 'error') banner = `<div class="banner bad">Last check (${esc(ago(data.lastAttemptAt))}) failed: ${esc(data.error)}. Showing the last good results.</div>`;
+    else if (data.warning) banner = `<div class="banner warn">${esc(data.warning)}</div>`;
     else if (upd && Date.now() - new Date(upd) > 3 * 3600e3) banner = `<div class="banner warn">No successful update for ${esc(ago(upd).replace(' ago', ''))} — results may be stale.</div>`;
     $('banner').innerHTML = banner;
 
