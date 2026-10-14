@@ -3,14 +3,23 @@
   "searches": [
     {
       "name": "מרכז והשרון",
-      "url": "https://www.yad2.co.il/realestate/rent/center-and-sharon?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1"
+      "url": "https://www.yad2.co.il/realestate/rent/center-and-sharon?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1",
+      "tiles": [
+        "31.40,34.40,31.95,35.60",
+        "31.95,34.40,32.20,34.88",
+        "31.95,34.88,32.20,35.60",
+        "32.20,34.40,32.80,35.60"
+      ]
     },
     {
       "name": "מישור החוף הצפוני",
-      "url": "https://www.yad2.co.il/realestate/rent/coastal-north?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1"
+      "url": "https://www.yad2.co.il/realestate/rent/coastal-north?property=3,5,6,39,32,55&minRooms=3&maxPrice=8000&imageOnly=1&priceOnly=1",
+      "tiles": [
+        "31.40,34.40,32.70,35.60",
+        "32.70,34.40,33.40,35.60"
+      ]
     }
   ],
   "newWindowHours": 48,
-  "keepRemovedDays": 7,
-  "maxPages": 25
+  "keepRemovedDays": 7
 }
